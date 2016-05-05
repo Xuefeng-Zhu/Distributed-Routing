@@ -8,6 +8,7 @@ import sim.basics as basics
 
 # We define infinity as a distance of 16.
 INFINITY = 16
+TIMEOUT = 15
 
 
 class DVRouter (basics.DVRouterBase):
@@ -40,10 +41,10 @@ class DVRouter (basics.DVRouterBase):
         The port number used by the link is passed in.
         """
         del self.port_latency[port]
-        for latencies in self.route_table.values():
+        for destination, latencies in self.route_table.items():
             if port in latencies:
                 del latencies[port]
-        self.handle_timer()
+            self._forward_route(destination)
 
     def handle_rx(self, packet, port):
         """
@@ -58,16 +59,21 @@ class DVRouter (basics.DVRouterBase):
         if isinstance(packet, basics.RoutePacket):
             if self.route_table.get(packet.destination) is None:
                 self.route_table[packet.destination] = {}
-            latency = min(INFINITY,
-                          self.port_latency.get(port, 16) + packet.latency)
-            self.route_table[packet.destination][port] = latency
-            self.handle_timer()
+            latency = self.port_latency[port] + packet.latency
+            if latency >= INFINITY:
+                if port in self.route_table[packet.destination]:
+                    del self.route_table[packet.destination][port]
+                    self._forward_route(packet.destination)
+            else:
+                self.route_table[packet.destination][port] =\
+                    (latency, api.current_time())
+                self._forward_route(packet.destination)
         elif isinstance(packet, basics.HostDiscoveryPacket):
             if self.route_table.get(packet.src) is None:
                 self.route_table[packet.src] = {}
             self.route_table[packet.src][
-                port] = self.port_latency.get(port, INFINITY)
-            self.handle_timer()
+                port] = (self.port_latency.get[port], api.current_time())
+            self._forward_route(packet.src)
         else:
             # Totally wrong behavior for the sake of demonstration only: send
             # the packet back to where it came from!
@@ -85,16 +91,26 @@ class DVRouter (basics.DVRouterBase):
         When called, your router should send tables to neighbors.  It also might
         not be a bad place to check for whether any entries have expired.
         """
-        for destination, latencies in self.route_table.items():
-            port, latency = self._get_min_latency(latencies)
-            route_packet = basics.RoutePacket(destination, latency)
+        for destination in self.route_table:
+            self._forward_route(destination)
+
+    def _forward_route(self, destination):
+        port, latency = self._get_min_latency(self.route_table[destination])
+        route_packet = basics.RoutePacket(destination, latency)
+        if port is not None:
             self.send(route_packet, port, flood=True)
 
     def _get_min_latency(latencies):
+        current_time = api.current_time()
         m_port = None
         m_latency = INFINITY
-        for port, latency in latencies.items():
-            if latency <= m_latency:
+        for port, (latency, timer) in latencies.items():
+            if current_time - timer > TIMEOUT:
+                del latencies[port]
+                continue
+
+            if latency < m_latency:
                 m_port = port
                 m_latency = latency
+
         return m_port, m_latency
