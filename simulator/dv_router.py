@@ -72,7 +72,7 @@ class DVRouter (basics.DVRouterBase):
             if self.route_table.get(packet.src) is None:
                 self.route_table[packet.src] = {}
             self.route_table[packet.src][
-                port] = (self.port_latency.get[port], api.current_time())
+                port] = (self.port_latency[port], None)
             self._forward_route(packet.src)
         else:
             # Totally wrong behavior for the sake of demonstration only: send
@@ -100,12 +100,12 @@ class DVRouter (basics.DVRouterBase):
         if port is not None:
             self.send(route_packet, port, flood=True)
 
-    def _get_min_latency(latencies):
+    def _get_min_latency(self, latencies):
         current_time = api.current_time()
         m_port = None
         m_latency = INFINITY
         for port, (latency, timer) in latencies.items():
-            if current_time - timer > TIMEOUT:
+            if timer is not None and current_time - timer > TIMEOUT:
                 del latencies[port]
                 continue
 
