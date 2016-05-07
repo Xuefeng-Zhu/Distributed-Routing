@@ -26,7 +26,6 @@ class DVRouter (basics.DVRouterBase):
         self.route_table = {}
         self.min_route = {}
         self.port_latency = {}
-        self.debug = False
 
     def handle_link_up(self, port, latency):
         """
@@ -59,8 +58,6 @@ class DVRouter (basics.DVRouterBase):
         """
         #self.log("RX %s on %s (%s)", packet, port, api.current_time())
         if isinstance(packet, basics.RoutePacket):
-            if self.debug:
-                print packet
             if self.route_table.get(packet.destination) is None:
                 self.route_table[packet.destination] = {}
             latency = self.port_latency[port] + packet.latency
@@ -71,7 +68,7 @@ class DVRouter (basics.DVRouterBase):
             else:
                 self.route_table[packet.destination][port] =\
                     (latency, api.current_time())
-                self._forward_route(packet.destination, port)
+                self._forward_route(packet.destination)
         elif isinstance(packet, basics.HostDiscoveryPacket):
             if self.route_table.get(packet.src) is None:
                 self.route_table[packet.src] = {}
@@ -96,19 +93,20 @@ class DVRouter (basics.DVRouterBase):
         not be a bad place to check for whether any entries have expired.
         """
         for destination in self.route_table:
-            self._forward_route(destination)
+            self._forward_route(destination, True)
 
-    def _forward_route(self, destination, in_port=None):
+    def _forward_route(self, destination, timeout=False):
         port, latency = self._get_min_latency(self.route_table[destination])
         route_packet = basics.RoutePacket(destination, latency)
-        if port is not None:
-            if in_port is None or port != self.min_route.get(destination):
+
+        if timeout or port != self.min_route.get(destination):
+            if port is not None or self.POISON_MODE:
                 self.send(route_packet, port, flood=True)
 
-            self.min_route[destination] = port
+            if self.POISON_MODE and port is not None:
+                self._send_poison_reverse(destination, port)
 
-            if port is not None and port == in_port and self.POISON_MODE:
-                self._send_poison(destination, port)
+            self.min_route[destination] = port
 
     def _get_min_latency(self, latencies):
         current_time = api.current_time()
@@ -125,7 +123,7 @@ class DVRouter (basics.DVRouterBase):
 
         return m_port, m_latency
 
-    def _send_poison(self, destination, port):
+    def _send_poison_reverse(self, destination, port):
         poison_packet = basics.RoutePacket(destination, INFINITY)
         poison_packet.outer_color = [2,2,2,1]
         poison_packet.inner_color = [2,2,2,1]
